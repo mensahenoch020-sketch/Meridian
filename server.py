@@ -28,6 +28,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS receipts(reference TEXT PRIMARY KEY REFERENCES ledger(id),recipient_reference TEXT UNIQUE REFERENCES ledger(id),sender_id INTEGER REFERENCES users(id),recipient_id INTEGER REFERENCES users(id),sender_name TEXT,recipient_name TEXT,sender_email TEXT,recipient_email TEXT,amount INTEGER NOT NULL,note TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP);
 
         """)
+        db.executescript("""
+        CREATE TABLE IF NOT EXISTS profiles(user_id INTEGER PRIMARY KEY REFERENCES users(id),phone TEXT NOT NULL DEFAULT '',address TEXT NOT NULL DEFAULT '',country TEXT NOT NULL DEFAULT '',transfer_notifications INTEGER NOT NULL DEFAULT 1,security_alerts INTEGER NOT NULL DEFAULT 1,product_updates INTEGER NOT NULL DEFAULT 0);
+        """)
+        session_columns={r["name"] for r in db.execute("PRAGMA table_info(sessions)")}
+        for column in ("device TEXT NOT NULL DEFAULT 'Unknown device'","created INTEGER NOT NULL DEFAULT 0","last_seen INTEGER NOT NULL DEFAULT 0"):
+            if column.split()[0] not in session_columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN "+column)
         configured_admin_password=os.environ.get("ADMIN_PASSWORD")
         invalid_admin_password=configured_admin_password is not None and not 12<=len(configured_admin_password)<=128
         if invalid_admin_password:
@@ -59,6 +66,14 @@ def entry(db,uid,kind,amount,asset,note):
 def safe_user(row):
     return {k:row[k] for k in ("id","name","email","role","frozen","usd","btc")}
 
+def session_digest(headers):
+    cookies=dict(p.strip().split("=",1) for p in headers.get("Cookie","").split(";") if "=" in p)
+    return hashlib.sha256(cookies.get("session","").encode()).hexdigest()
+
+def profile_data(db,uid):
+    row=db.execute("SELECT * FROM profiles WHERE user_id=?",(uid,)).fetchone()
+    return dict(row) if row else {"user_id":uid,"phone":"","address":"","country":"","transfer_notifications":1,"security_alerts":1,"product_updates":0}
+
 class Handler(BaseHTTPRequestHandler):
     def send(self,status,data,headers=None):
         raw=json.dumps(data).encode()
@@ -86,6 +101,10 @@ class Handler(BaseHTTPRequestHandler):
             with connect() as db:
                 u=self.current(db)
                 if not u: return self.send(401,{"error":"Please sign in to continue."})
+                if path=="/api/profile":
+                    sessions=db.execute("SELECT token,device,created,last_seen,expires FROM sessions WHERE user_id=? AND expires>? ORDER BY created DESC",(u["id"],int(time.time()))).fetchall()
+                    current=session_digest(self.headers)
+                    return self.send(200,{"user":safe_user(u),"profile":profile_data(db,u["id"]),"sessions":[{"id":s["token"],"device":s["device"],"created":s["created"] or s["expires"]-43200,"last_seen":s["last_seen"] or s["expires"]-43200,"current":s["token"]==current} for s in sessions]})
                 if path=="/api/me": return self.send(200,{"user":safe_user(u),"price":PRICE})
                 if path.startswith("/api/receipts/"):
                     reference=path.rsplit("/",1)[-1]
@@ -165,7 +184,7 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute("DELETE FROM attempts WHERE ip=?",(ip,))
                     token=secrets.token_urlsafe(32)
                     db.execute("DELETE FROM sessions WHERE expires<?",(now,))
-                    db.execute("INSERT INTO sessions VALUES(?,?,?)",(hashlib.sha256(token.encode()).hexdigest(),u["id"],now+43200))
+                    db.execute("INSERT INTO sessions(token,user_id,expires,device,created,last_seen) VALUES(?,?,?,?,?,?)",(hashlib.sha256(token.encode()).hexdigest(),u["id"],now+43200,self.headers.get("User-Agent","Unknown device")[:300],now,now))
                     db.commit()
                     cookie="session="+token+"; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200"
                     if os.environ.get("COOKIE_SECURE")=="1": cookie+="; Secure"
@@ -177,6 +196,50 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute("DELETE FROM sessions WHERE token=?",(hashlib.sha256(cookies.get("session","").encode()).hexdigest(),))
                     db.commit()
                     return self.send(200,{"ok":True},{"Set-Cookie":"session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"})
+                if path=="/api/profile":
+                    name=str(body.get("name","")).strip()
+                    phone=str(body.get("phone","")).strip()
+                    address=str(body.get("address","")).strip()
+                    country=str(body.get("country","")).strip()
+                    if not name or len(name)>80: raise ValueError("Enter your full name (up to 80 characters).")
+                    if len(phone)>30 or any(c not in "+0123456789 ()-." for c in phone): raise ValueError("Enter a valid phone number.")
+                    if len(address)>240 or len(country)>80: raise ValueError("Address or country is too long.")
+                    db.execute("INSERT OR IGNORE INTO profiles(user_id) VALUES(?)",(u["id"],))
+                    db.execute("UPDATE users SET name=? WHERE id=?",(name,u["id"]))
+                    db.execute("UPDATE profiles SET phone=?,address=?,country=? WHERE user_id=?",(phone,address,country,u["id"]))
+                    db.commit()
+                    return self.send(200,{"ok":True})
+                if path=="/api/preferences":
+                    keys=("transfer_notifications","security_alerts","product_updates")
+                    if any(type(body.get(k))!=bool for k in keys): raise ValueError("Choose valid notification preferences.")
+                    db.execute("INSERT OR IGNORE INTO profiles(user_id) VALUES(?)",(u["id"],))
+                    db.execute("UPDATE profiles SET transfer_notifications=?,security_alerts=?,product_updates=? WHERE user_id=?",
+                               tuple(int(body[k]) for k in keys)+(u["id"],))
+                    db.commit()
+                    return self.send(200,{"ok":True})
+                if path=="/api/password":
+                    if u["role"]=="admin": raise ValueError("Admin passwords are managed through the ADMIN_PASSWORD server setting.")
+                    current=str(body.get("current_password",""))
+                    new=str(body.get("new_password",""))
+                    if len(current)>128 or not secrets.compare_digest(u["password"],password_hash(current,u["salt"])):
+                        raise ValueError("Your current password is incorrect.")
+                    if not 12<=len(new)<=128: raise ValueError("Your new password must contain 12–128 characters.")
+                    if new==current: raise ValueError("Choose a different password.")
+                    salt=secrets.token_hex(16)
+                    db.execute("UPDATE users SET salt=?,password=? WHERE id=?",(salt,password_hash(new,salt),u["id"]))
+                    db.execute("DELETE FROM sessions WHERE user_id=? AND token!=?",(u["id"],session_digest(self.headers)))
+                    db.commit()
+                    return self.send(200,{"ok":True})
+                if path=="/api/sessions/revoke":
+                    target=body.get("id")
+                    current=session_digest(self.headers)
+                    if target=="others":
+                        db.execute("DELETE FROM sessions WHERE user_id=? AND token!=?",(u["id"],current))
+                    elif isinstance(target,str) and target!=current:
+                        db.execute("DELETE FROM sessions WHERE user_id=? AND token=?",(u["id"],target))
+                    else: raise ValueError("Use Sign out to end your current session.")
+                    db.commit()
+                    return self.send(200,{"ok":True})
                 if path=="/api/transfer":
                     amount=body.get("amount")
                     if type(amount)!=int or not 1<=amount<=100000000: raise ValueError("Enter a valid amount in cents.")

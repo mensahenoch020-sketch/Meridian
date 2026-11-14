@@ -229,6 +229,67 @@ class BankingTests(unittest.TestCase):
         with server.connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM receipts WHERE sender_id=?",(sid,)).fetchone()[0],1)
 
+    def test_profile_and_preferences_are_persisted_and_scoped(self):
+        _,cookie,uid=self.account()
+        _,other,_=self.account()
+        self.assertEqual(self.request("/api/profile")[0],401)
+        body={"name":"Updated Person","phone":"+1 (555) 010-1234","address":"10 North Road","country":"Ghana","role":"admin","usd":999}
+        self.assertEqual(self.request("/api/profile",body,cookie)[0],200)
+        profile=self.request("/api/profile",cookie=cookie)[1]
+        self.assertEqual(profile["user"]["name"],"Updated Person")
+        self.assertEqual(profile["user"]["role"],"customer")
+        self.assertEqual(profile["user"]["usd"],1000000)
+        self.assertEqual(self.request("/api/profile",cookie=other)[1]["user"]["name"],"Test Person")
+        prefs={"transfer_notifications":False,"security_alerts":True,"product_updates":True}
+        self.assertEqual(self.request("/api/preferences",prefs,cookie)[0],200)
+        self.assertEqual(self.request("/api/preferences",dict(prefs,product_updates="true"),cookie)[0],400)
+        server.init_db()
+        profile=self.request("/api/profile",cookie=cookie)[1]
+        self.assertEqual(profile["profile"]["phone"],body["phone"])
+        for k,v in prefs.items(): self.assertEqual(bool(profile["profile"][k]),v)
+        for change in [{"name":""},{"phone":"abc"},{"country":"x"*81}]:
+            self.assertEqual(self.request("/api/profile",dict(body,**change),cookie)[0],400)
+
+    def test_password_change_and_session_ownership(self):
+        email,cookie,uid=self.account()
+        _,_,second=self.request("/api/login",{"email":email,"password":"StrongDemoPassword123!"})
+        _,outsider,_=self.account()
+        sessions=self.request("/api/profile",cookie=cookie)[1]["sessions"]
+        self.assertEqual(len(sessions),2)
+        current=next(s for s in sessions if s["current"])
+        other=next(s for s in sessions if not s["current"])
+        self.assertEqual(self.request("/api/sessions/revoke",{"id":other["id"]},outsider)[0],200)
+        self.assertEqual(self.request("/api/me",cookie=second)[0],200)
+        self.assertEqual(self.request("/api/sessions/revoke",{"id":current["id"]},cookie)[0],400)
+        self.assertEqual(self.request("/api/sessions/revoke",{"id":other["id"]},cookie)[0],200)
+        self.assertEqual(self.request("/api/me",cookie=second)[0],401)
+        _,_,third=self.request("/api/login",{"email":email,"password":"StrongDemoPassword123!"})
+        self.assertEqual(self.request("/api/password",{"current_password":"wrong","new_password":"NewStrongPassword123!"},cookie)[0],400)
+        self.assertEqual(self.request("/api/password",{"current_password":"StrongDemoPassword123!","new_password":"short"},cookie)[0],400)
+        self.assertEqual(self.request("/api/password",{"current_password":"StrongDemoPassword123!","new_password":"NewStrongPassword123!"},cookie)[0],200)
+        self.assertEqual(self.request("/api/me",cookie=third)[0],401)
+        self.assertEqual(self.request("/api/me",cookie=cookie)[0],200)
+        self.assertEqual(self.request("/api/login",{"email":email,"password":"StrongDemoPassword123!"})[0],401)
+        self.assertEqual(self.request("/api/login",{"email":email,"password":"NewStrongPassword123!"})[0],200)
+        self.assertEqual(self.request("/api/sessions/revoke",{"id":"others"},cookie)[0],200)
+        self.assertEqual(len(self.request("/api/profile",cookie=cookie)[1]["sessions"]),1)
+
+    def test_existing_session_schema_migration(self):
+        import sqlite3
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            path=os.path.join(tmp,"legacy.db")
+            db=sqlite3.connect(path)
+            db.execute("CREATE TABLE sessions(token TEXT PRIMARY KEY,user_id INTEGER,expires INTEGER NOT NULL)")
+            db.execute("INSERT INTO sessions VALUES('existing',123,9999999999)")
+            db.commit()
+            db.close()
+            with patch.object(server,"DB_PATH",path):
+                server.init_db()
+                server.init_db()
+                with server.connect() as db:
+                    self.assertEqual(db.execute("SELECT device FROM sessions WHERE token='existing'").fetchone()["device"],"Unknown device")
+
     def test_signup_validation_messages(self):
         for data,expected in [
             ({"name":"","email":"valid@example.com","password":"LongPassword123!"},"full name"),
