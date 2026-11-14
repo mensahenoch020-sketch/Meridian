@@ -104,7 +104,7 @@ with tempfile.TemporaryDirectory() as tmp:
             page.screenshot(path="artifacts/mobile-settings.png",full_page=True)
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"),"Settings page overflows mobile viewport"
             page.locator("#logout").click()
-            page.locator("#toggle-auth").click()
+            page.locator("#auth-form input[name=email]").fill("mobile-signup@example.com")
             page.locator("#auth-form input[name=password]").fill("UpdatedMobilePassword123!")
             page.locator("#auth-form button[type=submit]").click()
             expect(page.locator("#shell")).to_be_visible()
