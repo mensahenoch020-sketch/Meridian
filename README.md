@@ -46,3 +46,10 @@ For a private demo, run behind an HTTPS reverse proxy and set COOKIE_SECURE=1. T
 If the service already initialized its persistent database, changing ADMIN_PASSWORD alone does not change the saved admin password: this setting only seeds new databases. Set it before first startup.
 
 Railway hosting/volumes may require account credits or a paid plan. No Railway credentials belong in this repository. The app is intentionally a demo; customer seed logins are public.
+
+## Interface and account operations
+Meridian uses its own navy/slate visual identity and inline SVG icon system, with mobile bottom navigation. Login credentials are documented here rather than displayed publicly on the login screen. The application retains a simulation notice: it does not move real funds or Bitcoin.
+
+Administrators can set customer USD or BTC balances under **Admin console → Set account balance**. A reason is required. Each change atomically records the ledger difference and an audit entry containing previous/new balances, actor, reason, and reference. Zero balances are supported; negative balances and edits to admin accounts are rejected.
+
+CI runs API tests plus mobile Chromium flows for login, transfers, BTC trading, and balance editing. Interface screenshots are attached as the `meridian-interface` workflow artifact. Railway services linked to the main branch can deploy this update automatically.

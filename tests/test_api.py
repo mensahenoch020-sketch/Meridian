@@ -97,6 +97,35 @@ class BankingTests(unittest.TestCase):
         self.assertEqual(self.request("/app.js")[0],200)
         self.assertEqual(self.request("/../../server.py")[0],404)
 
+    def test_admin_balance_adjustment_and_validation(self):
+        _,cookie,uid=self.account()
+        body={"id":uid,"asset":"USD","amount":2500000,"reason":"Opening balance correction"}
+        self.assertEqual(self.request("/api/admin/balance",body,cookie)[0],403)
+        self.assertEqual(self.request("/api/admin/balance",body)[0],401)
+        status,_,admin=self.request("/api/login",{"email":"admin@meridian.demo","password":os.environ.get("ADMIN_PASSWORD","MeridianAdmin123!")})
+        self.assertEqual(status,200)
+        self.assertEqual(self.request("/api/admin/balance",body,admin)[0],200)
+        self.assertEqual(self.balance(cookie)["usd"],2500000)
+        tx=self.request("/api/transactions",cookie=cookie)[1]["transactions"][0]
+        self.assertEqual(tx["kind"],"Balance adjustment")
+        self.assertEqual(tx["amount"],1500000)
+        self.assertEqual(tx["note"],body["reason"])
+        for patch in [{"amount":-1},{"amount":True},{"amount":1.5},{"amount":100000000001},{"reason":"x"},{"asset":"ETH"},{"id":999999},{"amount":2500000}]:
+            invalid=dict(body,**patch)
+            self.assertEqual(self.request("/api/admin/balance",invalid,admin)[0],400,invalid)
+        self.assertEqual(self.balance(cookie)["usd"],2500000)
+        self.assertEqual(self.request("/api/admin/balance",dict(body,asset="BTC",amount=123456789),admin)[0],200)
+        self.assertEqual(self.balance(cookie)["btc"],123456789)
+        self.assertEqual(self.request("/api/admin/balance",dict(body,amount=0),admin)[0],200)
+        self.assertEqual(self.balance(cookie)["usd"],0)
+        audit=self.request("/api/admin",cookie=admin)[1]["audit"]
+        changes=[json.loads(a["action"]) for a in audit if a["action"].startswith("{")]
+        self.assertEqual(len([a for a in changes if a["customer_id"]==uid]),3)
+        self.assertEqual(changes[0]["previous"],2500000)
+        self.assertEqual(changes[0]["balance"],0)
+        admin_id=self.balance(admin)["id"]
+        self.assertEqual(self.request("/api/admin/balance",dict(body,id=admin_id),admin)[0],400)
+
     def test_concurrent_transfers_cannot_overdraw(self):
         from concurrent.futures import ThreadPoolExecutor
         _,cookie,_=self.account()

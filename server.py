@@ -140,7 +140,7 @@ class Handler(BaseHTTPRequestHandler):
                     if type(amount)!=int or not 1<=amount<=100000000: raise ValueError("Enter a valid amount in cents.")
                     target=db.execute("SELECT * FROM users WHERE email=?",(str(body.get("email","")).strip().lower(),)).fetchone()
                     if not target or target["frozen"] or target["id"]==u["id"]: raise ValueError("Choose another active Meridian account.")
-                    if amount>u["usd"]: raise ValueError("Insufficient demo USD balance.")
+                    if amount>u["usd"]: raise ValueError("Insufficient USD balance.")
                     note=str(body.get("note",""))[:140]
                     db.execute("UPDATE users SET usd=usd-? WHERE id=?",(amount,u["id"]))
                     db.execute("UPDATE users SET usd=usd+? WHERE id=?",(amount,target["id"]))
@@ -156,8 +156,27 @@ class Handler(BaseHTTPRequestHandler):
                     if side=="buy" and cost>u["usd"] or side=="sell" and sats>u["btc"]: raise ValueError("Insufficient balance.")
                     sign=1 if side=="buy" else -1
                     db.execute("UPDATE users SET usd=usd-?,btc=btc+? WHERE id=?",(sign*cost,sign*sats,u["id"]))
-                    ref=entry(db,u["id"],"BTC "+side,-sign*cost,"USD","Simulated trade at $67,500/BTC")
+                    ref=entry(db,u["id"],"BTC "+side,-sign*cost,"USD","Trade at simulation price $67,500/BTC")
                     entry(db,u["id"],"BTC "+side,sign*sats,"BTC","Simulated trade")
+                elif path=="/api/admin/balance":
+                    if u["role"]!="admin": return self.send(403,{"error":"Administrator access required."})
+                    uid=body.get("id")
+                    asset=body.get("asset")
+                    balance=body.get("amount")
+                    reason=str(body.get("reason","")).strip()
+                    if type(uid)!=int or asset not in ("USD","BTC") or type(balance)!=int or not 0<=balance<=100000000000:
+                        raise ValueError("Select a valid customer, currency, and nonnegative balance.")
+                    if not 5<=len(reason)<=140: raise ValueError("Provide an adjustment reason of 5–140 characters.")
+                    target=db.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone()
+                    if not target or target["role"]!="customer": raise ValueError("Only customer balances can be adjusted.")
+                    column="usd" if asset=="USD" else "btc"
+                    previous=target[column]
+                    delta=balance-previous
+                    if delta==0: raise ValueError("The new balance matches the current balance.")
+                    db.execute("UPDATE users SET "+column+"=? WHERE id=?",(balance,uid))
+                    ref=entry(db,uid,"Balance adjustment",delta,asset,reason)
+                    action=json.dumps({"type":"balance_adjustment","customer_id":uid,"asset":asset,"previous":previous,"balance":balance,"change":delta,"reason":reason,"reference":ref})
+                    db.execute("INSERT INTO audit(actor,action) VALUES(?,?)",(u["id"],action))
                 elif path=="/api/admin/freeze":
                     if u["role"]!="admin": return self.send(403,{"error":"Administrator access required."})
                     uid=body.get("id")
