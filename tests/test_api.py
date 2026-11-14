@@ -197,6 +197,38 @@ class BankingTests(unittest.TestCase):
                     row=db.execute("SELECT * FROM users WHERE role='admin'").fetchone()
                     self.assertEqual(row["password"],server.password_hash("RecoveredAdminPassword123!",row["salt"]))
 
+    def test_transfer_receipts_are_persisted_and_access_controlled(self):
+        sender,ca,sid=self.account()
+        recipient,cb,rid=self.account()
+        _,outsider,_=self.account()
+        note="Dinner & travel"
+        status,result,_=self.request("/api/transfer",{"email":recipient,"amount":25050,"note":note},ca)
+        self.assertEqual(status,200)
+        reference=result["reference"]
+        status,data,_=self.request("/api/receipts/"+reference,cookie=ca)
+        self.assertEqual(status,200)
+        receipt=data["receipt"]
+        self.assertEqual(receipt["sender_id"],sid)
+        self.assertEqual(receipt["recipient_id"],rid)
+        self.assertEqual(receipt["amount"],25050)
+        self.assertEqual(receipt["note"],note)
+        self.assertEqual(receipt["sender_email"],sender)
+        self.assertEqual(receipt["recipient_email"],recipient)
+        self.assertTrue(receipt["created"])
+        self.assertEqual(self.request("/api/receipts/"+reference,cookie=cb)[0],200)
+        self.assertEqual(self.request("/api/receipts/"+reference,cookie=outsider)[0],404)
+        self.assertEqual(self.request("/api/receipts/"+reference)[0],401)
+        incoming=self.request("/api/transactions",cookie=cb)[1]["transactions"][0]
+        self.assertEqual(incoming["receipt_reference"],reference)
+        self.assertEqual(self.request("/api/receipts/"+incoming["id"],cookie=cb)[0],200)
+        with server.connect() as db:
+            self.assertEqual(db.execute("SELECT amount FROM receipts WHERE reference=?",(reference,)).fetchone()["amount"],25050)
+        before=self.balance(ca)["usd"]
+        self.assertEqual(self.request("/api/transfer",{"email":recipient,"amount":999999999},ca)[0],400)
+        self.assertEqual(self.balance(ca)["usd"],before)
+        with server.connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM receipts WHERE sender_id=?",(sid,)).fetchone()[0],1)
+
     def test_signup_validation_messages(self):
         for data,expected in [
             ({"name":"","email":"valid@example.com","password":"LongPassword123!"},"full name"),

@@ -25,6 +25,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS ledger(id TEXT PRIMARY KEY,user_id INTEGER REFERENCES users(id),kind TEXT,amount INTEGER,asset TEXT,note TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,actor INTEGER,action TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS attempts(ip TEXT PRIMARY KEY,count INTEGER,started INTEGER);
+        CREATE TABLE IF NOT EXISTS receipts(reference TEXT PRIMARY KEY REFERENCES ledger(id),recipient_reference TEXT UNIQUE REFERENCES ledger(id),sender_id INTEGER REFERENCES users(id),recipient_id INTEGER REFERENCES users(id),sender_name TEXT,recipient_name TEXT,sender_email TEXT,recipient_email TEXT,amount INTEGER NOT NULL,note TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP);
+
         """)
         configured_admin_password=os.environ.get("ADMIN_PASSWORD")
         invalid_admin_password=configured_admin_password is not None and not 12<=len(configured_admin_password)<=128
@@ -85,8 +87,14 @@ class Handler(BaseHTTPRequestHandler):
                 u=self.current(db)
                 if not u: return self.send(401,{"error":"Please sign in to continue."})
                 if path=="/api/me": return self.send(200,{"user":safe_user(u),"price":PRICE})
+                if path.startswith("/api/receipts/"):
+                    reference=path.rsplit("/",1)[-1]
+                    receipt=db.execute("SELECT * FROM receipts WHERE reference=? OR recipient_reference=?",(reference,reference)).fetchone()
+                    if not receipt or u["id"] not in (receipt["sender_id"],receipt["recipient_id"]) and u["role"]!="admin":
+                        return self.send(404,{"error":"Receipt unavailable for this transaction."})
+                    return self.send(200,{"receipt":dict(receipt)})
                 if path=="/api/transactions":
-                    rows=db.execute("SELECT * FROM ledger WHERE user_id=? ORDER BY rowid DESC LIMIT 500",(u["id"],)).fetchall()
+                    rows=db.execute("SELECT l.*, (SELECT reference FROM receipts r WHERE r.reference=l.id OR r.recipient_reference=l.id) AS receipt_reference FROM ledger l WHERE user_id=? ORDER BY l.rowid DESC LIMIT 500",(u["id"],)).fetchall()
                     return self.send(200,{"transactions":[dict(r) for r in rows]})
                 if path=="/api/admin":
                     if u["role"]!="admin": return self.send(403,{"error":"Administrator access required."})
@@ -179,7 +187,8 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute("UPDATE users SET usd=usd-? WHERE id=?",(amount,u["id"]))
                     db.execute("UPDATE users SET usd=usd+? WHERE id=?",(amount,target["id"]))
                     ref=entry(db,u["id"],"Transfer",-amount,"USD","To "+target["email"]+" · "+note)
-                    entry(db,target["id"],"Transfer",amount,"USD","From "+u["email"]+" · "+note)
+                    recipient_ref=entry(db,target["id"],"Transfer",amount,"USD","From "+u["email"]+" · "+note)
+                    db.execute("INSERT INTO receipts(reference,recipient_reference,sender_id,recipient_id,sender_name,recipient_name,sender_email,recipient_email,amount,note) VALUES(?,?,?,?,?,?,?,?,?,?)",(ref,recipient_ref,u["id"],target["id"],u["name"],target["name"],u["email"],target["email"],amount,note))
                 elif path=="/api/trade":
                     sats=body.get("sats")
                     side=body.get("side")
