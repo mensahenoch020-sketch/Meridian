@@ -26,12 +26,25 @@ def init_db():
         CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,actor INTEGER,action TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS attempts(ip TEXT PRIMARY KEY,count INTEGER,started INTEGER);
         """)
+        configured_admin_password=os.environ.get("ADMIN_PASSWORD")
+        if configured_admin_password and not 12<=len(configured_admin_password)<=128:
+            raise ValueError("ADMIN_PASSWORD must contain 12–128 characters.")
         for name,email,role,pw in [
             ("Alex Morgan","alex@meridian.demo","customer","MeridianDemo123!"),
             ("Sam Rivera","sam@meridian.demo","customer","MeridianDemo123!"),
             ("Administrator","admin@meridian.demo","admin",os.environ.get("ADMIN_PASSWORD","MeridianAdmin123!"))]:
             salt=secrets.token_hex(16)
             db.execute("INSERT OR IGNORE INTO users(name,email,salt,password,role) VALUES(?,?,?,?,?)",(name,email,salt,password_hash(pw,salt),role))
+        # Explicit environment configuration is authoritative for admin recovery.
+        # Never overwrite customer passwords, balances, or ledger entries.
+        if configured_admin_password:
+            admin=db.execute("SELECT * FROM users WHERE email='admin@meridian.demo' AND role='admin'").fetchone()
+            if admin and not secrets.compare_digest(admin["password"],password_hash(configured_admin_password,admin["salt"])):
+                salt=secrets.token_hex(16)
+                db.execute("UPDATE users SET salt=?,password=? WHERE id=?",(salt,password_hash(configured_admin_password,salt),admin["id"]))
+                db.execute("DELETE FROM sessions WHERE user_id=?",(admin["id"],))
+                db.execute("INSERT INTO audit(actor,action) VALUES(?,?)",(admin["id"],"Admin password updated from server configuration"))
+
 
 def entry(db,uid,kind,amount,asset,note):
     ref=secrets.token_hex(8)
@@ -126,8 +139,12 @@ class Handler(BaseHTTPRequestHandler):
                     pw=str(body.get("password",""))
                     if path=="/api/register":
                         name=str(body.get("name","")).strip()
-                        if not name or len(name)>80 or len(email)>254 or "@" not in email or not 12<=len(pw)<=128:
-                            raise ValueError("Enter a name, valid email, and password of 12–128 characters.")
+                        if not name or len(name)>80:
+                            raise ValueError("Enter your full name (up to 80 characters).")
+                        if len(email)>254 or email.count("@")!=1 or not all(email.split("@")):
+                            raise ValueError("Enter a valid email address.")
+                        if not 12<=len(pw)<=128:
+                            raise ValueError("Your password must contain 12–128 characters.")
                         salt=secrets.token_hex(16)
                         try: db.execute("INSERT INTO users(name,email,salt,password) VALUES(?,?,?,?)",(name,email,salt,password_hash(pw,salt)))
                         except sqlite3.IntegrityError: raise ValueError("An account already uses this email.")

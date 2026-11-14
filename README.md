@@ -14,7 +14,7 @@ Open http://localhost:8000. Register a customer account (starts with $10,000 dem
 - Recipient: sam@meridian.demo / MeridianDemo123!
 - Admin: admin@meridian.demo / MeridianAdmin123!
 
-Set ADMIN_PASSWORD before first run to replace the demo admin password. Seed customer passwords remain public demo credentials. Database is stored at data/meridian.db (override with DB_PATH). HOST defaults to 127.0.0.1; PORT defaults to 8000. Use a persistent volume for data when deploying.
+Set ADMIN_PASSWORD to choose or recover the admin password. Seed customer passwords remain public demo credentials. Database is stored at data/meridian.db (override with DB_PATH). HOST defaults to 127.0.0.1; PORT defaults to 8000. Use a persistent volume for data when deploying.
 
 ## Test
 ```sh
@@ -43,7 +43,7 @@ For a private demo, run behind an HTTPS reverse proxy and set COOKIE_SECURE=1. T
 5. Go to **Settings → Networking → Public Networking → Generate Domain**. Use the service's Railway `PORT` as the target if prompted. Open the generated HTTPS URL on your phone.
 6. Sign in with `alex@meridian.demo / MeridianDemo123!`, or register. Admin login is `admin@meridian.demo` with the `ADMIN_PASSWORD` you set.
 
-If the service already initialized its persistent database, changing ADMIN_PASSWORD alone does not change the saved admin password: this setting only seeds new databases. Set it before first startup.
+ADMIN_PASSWORD is authoritative when set: on startup it updates the existing admin password if needed and invalidates prior admin sessions. It does not change customer passwords, accounts, or balances.
 
 Railway hosting/volumes may require account credits or a paid plan. No Railway credentials belong in this repository. The app is intentionally a demo; customer seed logins are public.
 
@@ -59,4 +59,4 @@ Accounts are seeded automatically; no separate Railway user setup is needed. Che
 
 Signup requires a name, unused email, and a password of 12–128 characters. Errors now appear within the login form. Rate limits are isolated per account and peer, so a shared Railway proxy cannot lock every account together.
 
-Customer seed login is `alex@meridian.demo / MeridianDemo123!`. Admin uses `admin@meridian.demo` and the password saved when the database was first created. Changing ADMIN_PASSWORD after that does not reset it. Do not delete your persistent volume to troubleshoot login; that would erase accounts and transactions. Inspect Railway logs for server failures.
+Customer seed login is `alex@meridian.demo / MeridianDemo123!`. Admin uses `admin@meridian.demo`. Set ADMIN_PASSWORD to a strong 12–128 character password and redeploy to create or recover admin access. With no variable set, the existing saved password stays unchanged. Do not delete your persistent volume to troubleshoot login; that would erase accounts and transactions. Inspect Railway logs for server failures.

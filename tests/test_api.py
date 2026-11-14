@@ -147,6 +147,33 @@ class BankingTests(unittest.TestCase):
         with patch.dict(os.environ,{"RAILWAY_PUBLIC_DOMAIN":"bank.up.railway.app"}):
             self.assertEqual(self.request("/api/login",{"email":"sam@meridian.demo","password":"MeridianDemo123!"},origin="https://bank.up.railway.app")[0],200)
 
+    def test_seed_login_and_configured_admin_recovery(self):
+        from unittest.mock import patch
+        self.assertEqual(self.request("/api/login",{"email":"alex@meridian.demo","password":"MeridianDemo123!"})[0],200)
+        original=os.environ.get("ADMIN_PASSWORD","MeridianAdmin123!")
+        status,_,old_cookie=self.request("/api/login",{"email":"admin@meridian.demo","password":original})
+        self.assertEqual(status,200)
+        before=self.balance(old_cookie)["usd"]
+        try:
+            with patch.dict(os.environ,{"ADMIN_PASSWORD":"RecoveredAdminPassword123!"}):
+                server.init_db()
+                self.assertEqual(self.request("/api/me",cookie=old_cookie)[0],401)
+                status,_,new_cookie=self.request("/api/login",{"email":"admin@meridian.demo","password":"RecoveredAdminPassword123!"})
+                self.assertEqual(status,200)
+                self.assertEqual(self.balance(new_cookie)["usd"],before)
+                self.assertEqual(self.request("/api/login",{"email":"alex@meridian.demo","password":"MeridianDemo123!"})[0],200)
+        finally:
+            with patch.dict(os.environ,{"ADMIN_PASSWORD":original}): server.init_db()
+
+    def test_signup_validation_messages(self):
+        for data,expected in [
+            ({"name":"","email":"valid@example.com","password":"LongPassword123!"},"full name"),
+            ({"name":"Person","email":"invalid","password":"LongPassword123!"},"email"),
+            ({"name":"Person","email":"valid@example.com","password":"short"},"12–128")]:
+            status,result,_=self.request("/api/register",data)
+            self.assertEqual(status,400)
+            self.assertIn(expected,result["error"])
+
     def test_concurrent_transfers_cannot_overdraw(self):
         from concurrent.futures import ThreadPoolExecutor
         _,cookie,_=self.account()
