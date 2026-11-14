@@ -165,6 +165,38 @@ class BankingTests(unittest.TestCase):
         finally:
             with patch.dict(os.environ,{"ADMIN_PASSWORD":original}): server.init_db()
 
+    def test_invalid_admin_configuration_does_not_crash_or_reset_credentials(self):
+        from unittest.mock import patch
+        original=os.environ.get("ADMIN_PASSWORD","MeridianAdmin123!")
+        status,_,cookie=self.request("/api/login",{"email":"admin@meridian.demo","password":original})
+        self.assertEqual(status,200)
+        before=self.balance(cookie)
+        for invalid in ("short","","x"*129):
+            with patch.dict(os.environ,{"ADMIN_PASSWORD":invalid}):
+                with self.assertLogs(level="WARNING") as logs:
+                    server.init_db()
+                self.assertIn("ADMIN_PASSWORD ignored",logs.output[0])
+                self.assertEqual(self.balance(cookie),before)
+                with server.connect() as db:
+                    row=db.execute("SELECT * FROM users WHERE email='admin@meridian.demo'").fetchone()
+                    self.assertEqual(row["password"],server.password_hash(original,row["salt"]))
+
+    def test_fresh_database_with_invalid_admin_password_can_be_recovered(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(server,"DB_PATH",os.path.join(tmp,"fresh.db")):
+                with patch.dict(os.environ,{"ADMIN_PASSWORD":"short"}):
+                    with self.assertLogs(level="WARNING"): server.init_db()
+                with server.connect() as db:
+                    row=db.execute("SELECT * FROM users WHERE role='admin'").fetchone()
+                    for password in ("short","MeridianAdmin123!"):
+                        self.assertNotEqual(row["password"],server.password_hash(password,row["salt"]))
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0],3)
+                with patch.dict(os.environ,{"ADMIN_PASSWORD":"RecoveredAdminPassword123!"}): server.init_db()
+                with server.connect() as db:
+                    row=db.execute("SELECT * FROM users WHERE role='admin'").fetchone()
+                    self.assertEqual(row["password"],server.password_hash("RecoveredAdminPassword123!",row["salt"]))
+
     def test_signup_validation_messages(self):
         for data,expected in [
             ({"name":"","email":"valid@example.com","password":"LongPassword123!"},"full name"),

@@ -60,3 +60,5 @@ Accounts are seeded automatically; no separate Railway user setup is needed. Che
 Signup requires a name, unused email, and a password of 12–128 characters. Errors now appear within the login form. Rate limits are isolated per account and peer, so a shared Railway proxy cannot lock every account together.
 
 Customer seed login is `alex@meridian.demo / MeridianDemo123!`. Admin uses `admin@meridian.demo`. Set ADMIN_PASSWORD to a strong 12–128 character password and redeploy to create or recover admin access. With no variable set, the existing saved password stays unchanged. Do not delete your persistent volume to troubleshoot login; that would erase accounts and transactions. Inspect Railway logs for server failures.
+
+If ADMIN_PASSWORD is set but contains fewer than 12 or more than 128 characters (including an empty value), startup logs a warning instead of crashing. Existing admin credentials and sessions remain intact. On a fresh database with invalid configuration, the admin receives an undisclosed random password until a valid ADMIN_PASSWORD is supplied and the service restarts. Customer registration and customer seed logins remain available.

@@ -27,12 +27,15 @@ def init_db():
         CREATE TABLE IF NOT EXISTS attempts(ip TEXT PRIMARY KEY,count INTEGER,started INTEGER);
         """)
         configured_admin_password=os.environ.get("ADMIN_PASSWORD")
-        if configured_admin_password and not 12<=len(configured_admin_password)<=128:
-            raise ValueError("ADMIN_PASSWORD must contain 12–128 characters.")
+        invalid_admin_password=configured_admin_password is not None and not 12<=len(configured_admin_password)<=128
+        if invalid_admin_password:
+            logging.warning("ADMIN_PASSWORD ignored: use 12–128 characters. Existing admin credentials are preserved; a new admin cannot sign in until a valid password is configured.")
+            configured_admin_password=None
+        seed_admin_password=configured_admin_password or (secrets.token_urlsafe(32) if invalid_admin_password else "MeridianAdmin123!")
         for name,email,role,pw in [
             ("Alex Morgan","alex@meridian.demo","customer","MeridianDemo123!"),
             ("Sam Rivera","sam@meridian.demo","customer","MeridianDemo123!"),
-            ("Administrator","admin@meridian.demo","admin",os.environ.get("ADMIN_PASSWORD","MeridianAdmin123!"))]:
+            ("Administrator","admin@meridian.demo","admin",seed_admin_password)]:
             salt=secrets.token_hex(16)
             db.execute("INSERT OR IGNORE INTO users(name,email,salt,password,role) VALUES(?,?,?,?,?)",(name,email,salt,password_hash(pw,salt),role))
         # Explicit environment configuration is authoritative for admin recovery.
