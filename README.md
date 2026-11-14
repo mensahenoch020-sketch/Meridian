@@ -33,3 +33,16 @@ GitHub Actions runs API integration tests on pushes and pull requests.
 
 ## Deployment
 For a private demo, run behind an HTTPS reverse proxy and set COOKIE_SECURE=1. This is an educational demo, not production banking software. There are no real cards, deposits, external transfers, live prices, KYC, or blockchain withdrawals. Demo sessions expire after 12 hours. Frozen users cannot log in or transact. Admin actions are audited. Keep the database and backups private.
+
+## Deploy to Railway (including from your phone)
+
+1. Sign into https://railway.com with GitHub. Choose **New Project → Deploy from GitHub repo → mensahenoch020-sketch/Meridian**. Grant Railway repository access if requested.
+2. Before the first successful start, open the service **Variables** and set `ADMIN_PASSWORD` to your own strong password. The Dockerfile already sets `HOST=0.0.0.0`, `COOKIE_SECURE=1`, and `DB_PATH=/data/meridian.db`. Railway supplies `PORT` automatically.
+3. Add a **Volume** to this service, with mount path **/data**. Keep one replica: SQLite needs the same persistent volume for all requests. Without the volume, accounts and transactions can be lost on redeploy.
+4. Deploy (or redeploy after adding the variables and volume). The repository includes Docker build settings and a public `/health` readiness check.
+5. Go to **Settings → Networking → Public Networking → Generate Domain**. Use the service's Railway `PORT` as the target if prompted. Open the generated HTTPS URL on your phone.
+6. Sign in with `alex@meridian.demo / MeridianDemo123!`, or register. Admin login is `admin@meridian.demo` with the `ADMIN_PASSWORD` you set.
+
+If the service already initialized its persistent database, changing ADMIN_PASSWORD alone does not change the saved admin password: this setting only seeds new databases. Set it before first startup.
+
+Railway hosting/volumes may require account credits or a paid plan. No Railway credentials belong in this repository. The app is intentionally a demo; customer seed logins are public.

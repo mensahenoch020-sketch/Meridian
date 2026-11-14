@@ -92,6 +92,7 @@ class BankingTests(unittest.TestCase):
         self.assertEqual(self.request("/api/logout",{},cookie,origin="https://evil.example")[0],403)
         self.assertEqual(self.request("/api/logout",{},cookie)[0],200)
         self.assertEqual(self.request("/api/me",cookie=cookie)[0],401)
+        self.assertEqual(self.request("/health")[0],200)
         self.assertEqual(self.request("/")[0],200)
         self.assertEqual(self.request("/app.js")[0],200)
         self.assertEqual(self.request("/../../server.py")[0],404)

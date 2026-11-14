@@ -60,6 +60,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path=urlparse(self.path).path
+        if path=="/health":
+            with connect() as db:
+                db.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+            return self.send(200,{"ok":True})
         if path.startswith("/api/"):
             with connect() as db:
                 u=self.current(db)
