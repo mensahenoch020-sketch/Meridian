@@ -53,3 +53,10 @@ Meridian uses its own navy/slate visual identity and inline SVG icon system, wit
 Administrators can set customer USD or BTC balances under **Admin console → Set account balance**. A reason is required. Each change atomically records the ledger difference and an audit entry containing previous/new balances, actor, reason, and reference. Zero balances are supported; negative balances and edits to admin accounts are rejected.
 
 CI runs API tests plus mobile Chromium flows for login, transfers, BTC trading, and balance editing. Interface screenshots are attached as the `meridian-interface` workflow artifact. Railway services linked to the main branch can deploy this update automatically.
+
+## Sign-in troubleshooting on Railway
+Accounts are seeded automatically; no separate Railway user setup is needed. Check the deployment is running the latest main commit and open the generated **HTTPS** domain. If the UI reports an address configuration error, set `PUBLIC_ORIGIN` to that exact origin (for example `https://meridian-production.up.railway.app`), then redeploy. Railway's `RAILWAY_PUBLIC_DOMAIN` is also supported automatically.
+
+Signup requires a name, unused email, and a password of 12–128 characters. Errors now appear within the login form. Rate limits are isolated per account and peer, so a shared Railway proxy cannot lock every account together.
+
+Customer seed login is `alex@meridian.demo / MeridianDemo123!`. Admin uses `admin@meridian.demo` and the password saved when the database was first created. Changing ADMIN_PASSWORD after that does not reset it. Do not delete your persistent volume to troubleshoot login; that would erase accounts and transactions. Inspect Railway logs for server failures.

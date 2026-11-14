@@ -1,4 +1,4 @@
-import os, json, sqlite3, secrets, hashlib, time, csv, io
+import os, json, sqlite3, secrets, hashlib, time, csv, io, logging
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
@@ -88,8 +88,19 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_POST(self):
-        if self.headers.get("Origin") and urlparse(self.headers["Origin"]).netloc != self.headers.get("Host"):
-            return self.send(403,{"error":"Invalid request origin."})
+        origin=self.headers.get("Origin")
+        if origin:
+            allowed={("https",self.headers.get("Host")),("http",self.headers.get("Host"))}
+            # Use configured public origins, never arbitrary client-supplied forwarding headers.
+            public=os.environ.get("PUBLIC_ORIGIN","").rstrip("/")
+            domain=os.environ.get("RAILWAY_PUBLIC_DOMAIN","").strip()
+            if public:
+                parsed=urlparse(public)
+                allowed.add((parsed.scheme,parsed.netloc))
+            if domain: allowed.add(("https",domain))
+            parsed=urlparse(origin)
+            if (parsed.scheme,parsed.netloc) not in allowed or parsed.path not in ("","/") or parsed.query or parsed.fragment:
+                return self.send(403,{"error":"This address is not configured for sign-in. Open the app at its public HTTPS address or ask the owner to set PUBLIC_ORIGIN."})
         if self.headers.get("Content-Type","").split(";")[0]!="application/json":
             return self.send(415,{"error":"JSON required."})
         try:
@@ -101,7 +112,9 @@ class Handler(BaseHTTPRequestHandler):
                 db.execute("BEGIN IMMEDIATE")
                 path=urlparse(self.path).path
                 if path in ("/api/login","/api/register"):
-                    ip=self.client_address[0]
+                    email=str(body.get("email","")).strip().lower()
+                    # Railway clients may share a proxy IP: do not lock every account together.
+                    ip=hashlib.sha256((self.client_address[0]+"|"+email).encode()).hexdigest()
                     now=int(time.time())
                     db.execute("DELETE FROM attempts WHERE started<?",(now-300,))
                     attempt=db.execute("SELECT count FROM attempts WHERE ip=?",(ip,)).fetchone()
@@ -121,6 +134,7 @@ class Handler(BaseHTTPRequestHandler):
                     u=db.execute("SELECT * FROM users WHERE email=?",(email,)).fetchone()
                     if not u or len(pw)>128 or not secrets.compare_digest(u["password"],password_hash(pw,u["salt"])) or u["frozen"]:
                         return self.send(401,{"error":"Incorrect credentials or account unavailable."})
+                    db.execute("DELETE FROM attempts WHERE ip=?",(ip,))
                     token=secrets.token_urlsafe(32)
                     db.execute("DELETE FROM sessions WHERE expires<?",(now,))
                     db.execute("INSERT INTO sessions VALUES(?,?,?)",(hashlib.sha256(token.encode()).hexdigest(),u["id"],now+43200))
@@ -194,7 +208,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError,TypeError) as e:
             self.send(400,{"error":str(e)})
         except Exception:
-            self.log_error("Request failed")
+            logging.exception("Request failed for %s", urlparse(self.path).path)
             self.send(500,{"error":"Unable to complete request. Please try again."})
 
 if __name__=="__main__":

@@ -126,6 +126,27 @@ class BankingTests(unittest.TestCase):
         admin_id=self.balance(admin)["id"]
         self.assertEqual(self.request("/api/admin/balance",dict(body,id=admin_id),admin)[0],400)
 
+    def test_proxy_rate_limits_are_isolated_and_success_resets(self):
+        email,cookie,_=self.account()
+        for _ in range(20):
+            self.assertEqual(self.request("/api/login",{"email":email,"password":"wrong"})[0],401)
+        self.assertEqual(self.request("/api/login",{"email":email,"password":"StrongDemoPassword123!"})[0],429)
+        other,_,_=self.account()
+        self.assertEqual(self.request("/api/login",{"email":other,"password":"StrongDemoPassword123!"})[0],200)
+        with server.connect() as db:
+            key=server.hashlib.sha256(("127.0.0.1|"+other).encode()).hexdigest()
+            self.assertIsNone(db.execute("SELECT * FROM attempts WHERE ip=?",(key,)).fetchone())
+
+    def test_configured_public_origin_through_proxy(self):
+        from unittest.mock import patch
+        with patch.dict(os.environ,{"PUBLIC_ORIGIN":"https://bank.example.com"}):
+            status,_,cookie=self.request("/api/login",{"email":"sam@meridian.demo","password":"MeridianDemo123!"},origin="https://bank.example.com")
+            self.assertEqual(status,200)
+            self.assertEqual(self.request("/api/logout",{},cookie,origin="https://bank.example.com.evil.test")[0],403)
+            self.assertEqual(self.request("/api/logout",{},cookie,origin="https://bank.example.com")[0],200)
+        with patch.dict(os.environ,{"RAILWAY_PUBLIC_DOMAIN":"bank.up.railway.app"}):
+            self.assertEqual(self.request("/api/login",{"email":"sam@meridian.demo","password":"MeridianDemo123!"},origin="https://bank.up.railway.app")[0],200)
+
     def test_concurrent_transfers_cannot_overdraw(self):
         from concurrent.futures import ThreadPoolExecutor
         _,cookie,_=self.account()
