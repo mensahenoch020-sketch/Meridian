@@ -1,5 +1,5 @@
 """Mobile banking flows against a real server; screenshots uploaded by CI."""
-import os, subprocess, tempfile, time, urllib.request, sys
+import os, subprocess, tempfile, time, urllib.request, sys, shutil
 from datetime import datetime, timedelta, timezone
 sys.path.insert(0,str(__import__('pathlib').Path(__file__).resolve().parent.parent))
 import banking
@@ -17,7 +17,8 @@ with tempfile.TemporaryDirectory() as tmp:
             except Exception:
                 time.sleep(.25)
         with sync_playwright() as p:
-            browser=p.chromium.launch()
+            chrome=shutil.which("google-chrome") or shutil.which("chromium")
+            browser=p.chromium.launch(executable_path=chrome) if chrome else p.chromium.launch()
             page=browser.new_page(viewport={"width":390,"height":844},is_mobile=True,device_scale_factor=1)
             errors=[]
             page.on("pageerror",lambda error: errors.append(str(error)))
