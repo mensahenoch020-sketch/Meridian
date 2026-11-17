@@ -19,6 +19,8 @@ with tempfile.TemporaryDirectory() as tmp:
             errors=[]
             page.on("pageerror",lambda error: errors.append(str(error)))
             page.goto("http://127.0.0.1:8099")
+            Path("artifacts").mkdir(exist_ok=True)
+            page.screenshot(path="artifacts/mobile-signin.png",full_page=True)
             page.get_by_label("Email address").fill("alex@meridian.demo")
             page.get_by_label("Password",exact=True).fill("MeridianDemo123!")
             page.locator("#auth-form button[type=submit]").click()
@@ -27,7 +29,15 @@ with tempfile.TemporaryDirectory() as tmp:
             Path("artifacts").mkdir(exist_ok=True)
             page.screenshot(path="artifacts/mobile-overview.png",full_page=True)
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"),"Page overflows mobile viewport"
-            page.locator("nav [data-view=transfer]").click()
+            for width in (390,768,1440):
+                page.set_viewport_size({"width":width,"height":900})
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"),"Dashboard overflows viewport"
+                page.screenshot(path="artifacts/accounts-"+str(width)+".png",full_page=True)
+            page.set_viewport_size({"width":390,"height":844})
+            page.locator(".quick-actions [data-view=settings]").click()
+            expect(page.locator("#preferences-form")).to_be_visible()
+            page.locator("nav [data-view=overview]").click()
+            page.locator(".quick-actions [data-view=transfer]").click()
             page.get_by_label("Recipient email").fill("sam@meridian.demo")
             page.get_by_label("Amount (USD)").fill("25.50")
             page.get_by_label("Note (optional)").fill("Lunch <test> & travel")
