@@ -224,10 +224,11 @@ def action(db,u,name,b,entry,hash_password):
         sec=db.execute("SELECT * FROM security WHERE user_id=?",(uid,)).fetchone()
         code=str(b.get("code","")).strip()
         counter=int(time.time())//30
-        if not sec or sec["enabled"] or not sec["pending_secret"] or sec["pending_expires"]<time.time() or not any(hmac.compare_digest(totp(sec["pending_secret"],counter+d),code) for d in (-1,0,1)):
+        matches=[counter+d for d in (-1,0,1) if sec and sec["pending_secret"] and hmac.compare_digest(totp(sec["pending_secret"],counter+d),code)]
+        if not sec or sec["enabled"] or not sec["pending_secret"] or sec["pending_expires"]<time.time() or not matches:
             raise ValueError("Enter a valid code for the current setup. Setup expires after 10 minutes.")
         codes=[secrets.token_hex(6) for _ in range(8)]
-        db.execute("UPDATE security SET secret=pending_secret,pending_secret=NULL,pending_expires=0,enabled=1,last_counter=? WHERE user_id=?",(counter,uid))
+        db.execute("UPDATE security SET secret=pending_secret,pending_secret=NULL,pending_expires=0,enabled=1,last_counter=? WHERE user_id=?",(max(matches),uid))
         db.execute("DELETE FROM backup_codes WHERE user_id=?",(uid,))
         db.executemany("INSERT INTO backup_codes VALUES(?,?)",[(uid,digest(code)) for code in codes])
         event(db,uid,"Two-factor authentication enabled","Authenticator and backup codes protect sign-in.")

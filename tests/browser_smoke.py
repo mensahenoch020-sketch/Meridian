@@ -146,6 +146,7 @@ with tempfile.TemporaryDirectory() as tmp:
             page.locator("#freeze-card").click()
             expect(page.locator("#card-spend button")).to_be_disabled()
             page.locator("#freeze-card").click()
+            expect(page.locator("#card-spend button")).to_be_enabled()
             page.locator("#card-repay input[name=amount]").fill("10")
             page.locator("#card-repay button").click()
             expect(page.locator("#extra-feedback")).to_contain_text("repayment completed")

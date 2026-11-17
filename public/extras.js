@@ -13,7 +13,15 @@ if(actions)actions.insertAdjacentHTML('afterend','<div class="feature-shortcuts"
 }
 function extraFeedback(message,error=false){const el=$('#extra-feedback');if(el){el.hidden=false;el.textContent=message;el.className='account-feedback'+(error?' error':'')}toast(message)}
 function bindExtraForm(id,handler){const form=$(id);if(!form)return;form.onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{await handler(Object.fromEntries(new FormData(form)),form)}catch(err){extraFeedback(err.message,true)}finally{b.disabled=false}}}
-async function extraAction(action,data,message){const result=await api('hub/'+action,data);await refresh();await render();if(message)extraFeedback(message);return result}
+let extraBusy=false;
+async function extraAction(action,data,message){
+if(extraBusy)throw Error('Please wait for the current action to finish.');
+extraBusy=true;const originalView=view;
+const controls=Array.from(document.querySelectorAll('#extra-body button,#extra-body input,#extra-body select')).map(el=>[el,el.disabled]);
+controls.forEach(([el])=>el.disabled=true);
+try{const result=await api('hub/'+action,data);await refresh();if(view===originalView)await render();if(message)extraFeedback(message);return result}
+finally{extraBusy=false;controls.forEach(([el,disabled])=>{if(el.isConnected)el.disabled=disabled})}
+}
 function empty(message){return '<p class="empty">'+esc(message)+'</p>'}
 function progressBar(value,max,label){return '<progress value="'+Math.min(value,max)+'" max="'+max+'" aria-label="'+esc(label)+'"></progress>'}
 function categoriesOptions(selected='Other'){return ['Essentials','Food','Travel','Shopping','Entertainment','Transfers','Other'].map(c=>'<option '+(c===selected?'selected':'')+'>'+c+'</option>').join('')}
