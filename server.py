@@ -2,6 +2,7 @@ import os, json, sqlite3, secrets, hashlib, time, csv, io, logging
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
+import banking
 
 DB_PATH = os.environ.get("DB_PATH", "data/meridian.db")
 PRICE = 6750000  # USD cents per BTC
@@ -35,6 +36,7 @@ def init_db():
         for column in ("device TEXT NOT NULL DEFAULT 'Unknown device'","created INTEGER NOT NULL DEFAULT 0","last_seen INTEGER NOT NULL DEFAULT 0"):
             if column.split()[0] not in session_columns:
                 db.execute("ALTER TABLE sessions ADD COLUMN "+column)
+        banking.schema(db)
         configured_admin_password=os.environ.get("ADMIN_PASSWORD")
         invalid_admin_password=configured_admin_password is not None and not 12<=len(configured_admin_password)<=128
         if invalid_admin_password:
@@ -101,6 +103,7 @@ class Handler(BaseHTTPRequestHandler):
             with connect() as db:
                 u=self.current(db)
                 if not u: return self.send(401,{"error":"Please sign in to continue."})
+                if path=="/api/hub": return self.send(200,banking.state(db,u))
                 if path=="/api/profile":
                     sessions=db.execute("SELECT token,device,created,last_seen,expires FROM sessions WHERE user_id=? AND expires>? ORDER BY created DESC",(u["id"],int(time.time()))).fetchall()
                     current=session_digest(self.headers)
@@ -119,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
                     if u["role"]!="admin": return self.send(403,{"error":"Administrator access required."})
                     return self.send(200,{"users":[safe_user(r) for r in db.execute("SELECT * FROM users")],"transactions":[dict(r) for r in db.execute("SELECT * FROM ledger ORDER BY rowid DESC LIMIT 200")],"audit":[dict(r) for r in db.execute("SELECT * FROM audit ORDER BY id DESC LIMIT 100")]})
                 return self.send(404,{"error":"Not found"})
-        names={"/":"index.html","/app.js":"app.js","/style.css":"style.css"}
+        names={"/":"index.html","/app.js":"app.js","/style.css":"style.css","/extras.js":"extras.js"}
         if path not in names: return self.send(404,{"error":"Not found"})
         raw=(PUBLIC/names[path]).read_bytes()
         self.send_response(200)
@@ -154,7 +157,7 @@ class Handler(BaseHTTPRequestHandler):
             with connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 path=urlparse(self.path).path
-                if path in ("/api/login","/api/register"):
+                if path in ("/api/login","/api/register","/api/recover"):
                     email=str(body.get("email","")).strip().lower()
                     # Railway clients may share a proxy IP: do not lock every account together.
                     ip=hashlib.sha256((self.client_address[0]+"|"+email).encode()).hexdigest()
@@ -166,6 +169,11 @@ class Handler(BaseHTTPRequestHandler):
                     db.commit()
                     db.execute("BEGIN IMMEDIATE")
                     email=str(body.get("email","")).strip().lower()
+                    if path=="/api/recover":
+                        result=banking.recovery(db,body,password_hash)
+                        db.execute("DELETE FROM attempts WHERE ip=?",(ip,))
+                        db.commit()
+                        return self.send(200,result)
                     pw=str(body.get("password",""))
                     if path=="/api/register":
                         name=str(body.get("name","")).strip()
@@ -181,6 +189,8 @@ class Handler(BaseHTTPRequestHandler):
                     u=db.execute("SELECT * FROM users WHERE email=?",(email,)).fetchone()
                     if not u or len(pw)>128 or not secrets.compare_digest(u["password"],password_hash(pw,u["salt"])) or u["frozen"]:
                         return self.send(401,{"error":"Incorrect credentials or account unavailable."})
+                    if not banking.check_factor(db,u["id"],body.get("code")):
+                        return self.send(400,{"error":"Enter a fresh authenticator code or an unused backup code."})
                     db.execute("DELETE FROM attempts WHERE ip=?",(ip,))
                     token=secrets.token_urlsafe(32)
                     db.execute("DELETE FROM sessions WHERE expires<?",(now,))
@@ -191,6 +201,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(200,{"user":safe_user(u)},{"Set-Cookie":cookie})
                 u=self.current(db)
                 if not u: return self.send(401,{"error":"Please sign in to continue."})
+                if path.startswith("/api/hub/"):
+                    result=banking.action(db,u,path[len("/api/hub/"):],body,entry,password_hash)
+                    db.commit()
+                    return self.send(200,result)
                 if path=="/api/logout":
                     cookies=dict(p.strip().split("=",1) for p in self.headers.get("Cookie","").split(";") if "=" in p)
                     db.execute("DELETE FROM sessions WHERE token=?",(hashlib.sha256(cookies.get("session","").encode()).hexdigest(),))
@@ -225,6 +239,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("Your current password is incorrect.")
                     if not 12<=len(new)<=128: raise ValueError("Your new password must contain 12–128 characters.")
                     if new==current: raise ValueError("Choose a different password.")
+                    if not banking.check_factor(db,u["id"],body.get("code")): raise ValueError("Enter a fresh authenticator or backup code.")
                     salt=secrets.token_hex(16)
                     db.execute("UPDATE users SET salt=?,password=? WHERE id=?",(salt,password_hash(new,salt),u["id"]))
                     db.execute("DELETE FROM sessions WHERE user_id=? AND token!=?",(u["id"],session_digest(self.headers)))
@@ -247,11 +262,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not target or target["frozen"] or target["id"]==u["id"]: raise ValueError("Choose another active Meridian account.")
                     if amount>u["usd"]: raise ValueError("Insufficient USD balance.")
                     note=str(body.get("note",""))[:140]
-                    db.execute("UPDATE users SET usd=usd-? WHERE id=?",(amount,u["id"]))
-                    db.execute("UPDATE users SET usd=usd+? WHERE id=?",(amount,target["id"]))
-                    ref=entry(db,u["id"],"Transfer",-amount,"USD","To "+target["email"]+" · "+note)
-                    recipient_ref=entry(db,target["id"],"Transfer",amount,"USD","From "+u["email"]+" · "+note)
-                    db.execute("INSERT INTO receipts(reference,recipient_reference,sender_id,recipient_id,sender_name,recipient_name,sender_email,recipient_email,amount,note) VALUES(?,?,?,?,?,?,?,?,?,?)",(ref,recipient_ref,u["id"],target["id"],u["name"],target["name"],u["email"],target["email"],amount,note))
+                    ref=banking.transfer(db,u,target,amount,note,entry)
                 elif path=="/api/trade":
                     sats=body.get("sats")
                     side=body.get("side")

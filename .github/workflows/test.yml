@@ -14,9 +14,11 @@ jobs:
         with:
           node-version: '22'
       - name: Check Python syntax
-        run: python -m compileall -q server.py tests
+        run: python -m compileall -q server.py banking.py tests
       - name: Check JavaScript syntax
-        run: node --check public/app.js
+        run: |
+          node --check public/app.js
+          node --check public/extras.js
       - name: Integration tests
         run: python -m unittest discover -s tests -v
       - name: Install browser testing tools

@@ -1,10 +1,16 @@
-# Meridian priorities
+# Meridian features
+Implemented:
+- Profile and Settings, contact details, customer password changes, and session revocation.
+- Money Spaces and savings milestones.
+- Planned expenses and safe-to-spend estimates.
+- Spending categories and monthly insights.
+- Payment requests with payer approval and receipts.
+- Account nicknames, card order, and three color themes.
+- Financial timeline of transactions and account milestones.
+- Simulated virtual credit cards, purchases, repayment, and freeze controls.
+- TOTP authenticator protection, single-use backup codes, and recovery-key password resets.
 
-1. **Profile & Settings — implemented**: personal details, customer password changes, saved communication preferences, and session revocation. Email changes and notification delivery remain future work.
-2. **Password recovery and email verification**.
-3. **Two-factor authentication and session management**.
-4. **Transfer review**: confirm the recipient and amount before sending.
-5. **Notifications and monthly statements**.
-6. **Saved recipients, transfer limits, and support requests**.
-
-Items marked implemented are available; the remaining items are planned.
+Future integrations:
+- Verified email changes and email delivery.
+- Real card issuing, credit underwriting, external payments, and blockchain connectivity.
+- Downloadable monthly statements and saved payees.

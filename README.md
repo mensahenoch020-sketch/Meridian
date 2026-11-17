@@ -62,3 +62,20 @@ Signup requires a name, unused email, and a password of 12–128 characters. Err
 Customer seed login is `alex@meridian.demo / MeridianDemo123!`. Admin uses `admin@meridian.demo`. Set ADMIN_PASSWORD to a strong 12–128 character password and redeploy to create or recover admin access. With no variable set, the existing saved password stays unchanged. Do not delete your persistent volume to troubleshoot login; that would erase accounts and transactions. Inspect Railway logs for server failures.
 
 If ADMIN_PASSWORD is set but contains fewer than 12 or more than 128 characters (including an empty value), startup logs a warning instead of crashing. Existing admin credentials and sessions remain intact. On a fresh database with invalid configuration, the admin receives an undisclosed random password until a valid ADMIN_PASSWORD is supplied and the service restarts. Customer registration and customer seed logins remain available.
+
+## Money tools, credit, and security
+
+The Explore tab contains Money Spaces, planned expenses and safe-to-spend, spending insights, payment requests, the financial timeline, dashboard customization, and security setup. Cards has its own navigation entry.
+
+- Money Spaces hold USD separately: allocation reduces available USD, withdrawal restores it. Goals do not pay interest.
+- Safe-to-spend is available USD less expenses due in the next 30 days and a planned card minimum (3% of debt, at least $25, capped at debt). It is an estimate, and planned expenses do not automatically pay themselves.
+- Insights summarize outgoing transfers and simulated card purchases. Repayments, trading, goal movements, and adjustments are excluded to prevent double counting. Categories can be changed. Coverage is bounded to the latest 2,000 ledger entries.
+- Requests can be paid or declined by the payer, or cancelled by the requester. Paying creates a normal transfer receipt. A pending request can only be paid once.
+- Each customer can open one simulated virtual credit card with a $3,000 line. Purchases create debt, repayments use USD and restore available credit, and freezing blocks new purchases. There is no issuer, usable card number, card network, interest, real credit product, or external payment integration.
+- Account nicknames, order, and themes persist in SQLite and follow sign-in across devices.
+- Security supports TOTP authenticator setup with a manual secret and eight single-use backup codes. An authenticator code already used for authentication cannot be reused. Use a fresh code (30-second rotation) or a backup code.
+- Customer password recovery uses a private recovery key generated from a signed-in session after password verification. The key is stored hashed and shown once. Recovery requires that key plus TOTP/backup authentication when enabled, revokes all sessions, and consumes the recovery key. Generate a replacement after recovery. There is no email reset delivery.
+- Admin password recovery continues to use ADMIN_PASSWORD on Railway. Authenticator setup still applies to admin sign-in.
+- Keep your persistent Railway volume private: it contains account data and authenticator secrets. Back up the SQLite file securely.
+
+The Docker image includes banking.py. Existing databases are upgraded with additive tables; no balance reset is needed. CI includes API concurrency, ownership, conservation, TOTP vectors/replay, recovery, and mobile browser coverage of the new flows.
