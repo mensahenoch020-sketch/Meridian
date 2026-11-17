@@ -21,6 +21,20 @@ jobs:
           node --check public/extras.js
       - name: Integration tests
         run: python -m unittest discover -s tests -v
+      - name: Railway container startup
+        run: |
+          docker build -t meridian-ci .
+          docker run -d --name meridian-ci -e PORT=8080 -e ADMIN_PASSWORD=ContainerTestPassword123! -p 127.0.0.1:8080:8080 meridian-ci
+          trap 'docker logs meridian-ci; docker rm -f meridian-ci' EXIT
+          ready=0
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8080/health; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
       - name: Install browser testing tools
         run: |
           pip install playwright==1.56.0
